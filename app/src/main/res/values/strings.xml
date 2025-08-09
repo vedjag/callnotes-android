@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">CallNotes</string>
+    <string name="open">Open</string>
+    <string name="dismiss">Dismiss</string>
+    <string name="pick_date_time">Pick date &amp; time</string>
+    <string name="not_set">Not set</string>
+</resources>
