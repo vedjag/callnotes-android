@@ -8,11 +8,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify ZIP exists
-        run: test -f CallNotesAndroid.zip || (echo "❌ CallNotesAndroid.zip not found at repo root" && exit 1)
+      - name: Find ZIP in repo root
+        id: findzip
+        run: |
+          set -e
+          ZIP=$(ls -1 *.zip 2>/dev/null | head -n1 || true)
+          if [ -z "$ZIP" ]; then
+            echo "❌ No .zip found at repo root"
+            exit 1
+          fi
+          echo "zip=$ZIP" >> $GITHUB_OUTPUT
+          echo "Found ZIP: $ZIP"
 
       - name: Unzip project
-        run: unzip -o CallNotesAndroid.zip -d .
+        run: unzip -o "${{ steps.findzip.outputs.zip }}" -d .
 
       - name: List files
         run: |
