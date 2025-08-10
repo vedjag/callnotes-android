@@ -35,7 +35,7 @@ jobs:
           mkdir -p callnotes/app/src/main/java/com/example/callnotes/{data,util,telephony,notify}
           mkdir -p callnotes/app/src/main/res/{layout,values,drawable,mipmap-anydpi-v26}
 
-          # settings.gradle (plugin versions here)
+          # settings.gradle
           cat > callnotes/settings.gradle <<'EOF'
           pluginManagement {
               repositories {
@@ -374,7 +374,7 @@ jobs:
           }
           EOF
 
-          # telephony/OverlayService.kt
+          # telephony/OverlayService.kt  (FIXED: Gravity.TOP or Gravity.END)
           cat > callnotes/app/src/main/java/com/example/callnotes/telephony/OverlayService.kt <<'EOF'
           package com.example.callnotes.telephony
 
@@ -445,7 +445,7 @@ jobs:
                               WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                               WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                       PixelFormat.TRANSLUCENT
-                  ).apply { gravity = Gravity.TOP | Gravity.END; x = 16; y = 150 }
+                  ).apply { gravity = Gravity.TOP or Gravity.END; x = 16; y = 150 }
 
               private fun showPrompt(number: String, hasExisting: Boolean) {
                   removeViews()
@@ -769,7 +769,7 @@ jobs:
           </LinearLayout>
           EOF
 
-          # overlay_form.xml (fixed: textColorHint + string ref)
+          # overlay_form.xml (fixed: textColorHint + & via string)
           cat > callnotes/app/src/main/res/layout/overlay_form.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
