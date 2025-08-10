@@ -26,7 +26,6 @@ jobs:
         run: |
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
           yes | sdkmanager --licenses
-
       - name: Create Android project files
         run: |
           set -e
