@@ -807,7 +807,7 @@ jobs:
                       <Space android:layout_width="8dp" android:layout_height="wrap_content"/>
                       <Button
                           android:id="@+id/btnPickWhen"
-                          android:text="Pick date & time"
+                          android:text="@string/pick_date_time"
                           android:layout_width="wrap_content"
                           android:layout_height="wrap_content"/>
                   </LinearLayout>
