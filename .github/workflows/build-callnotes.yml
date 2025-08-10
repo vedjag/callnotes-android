@@ -8,41 +8,33 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout (empty repo OK)
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v3
 
       - name: Install SDK components & accept licenses
         run: |
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
           yes | sdkmanager --licenses
 
-      - name: Create Android project files
+      - name: Create Android project files (keyboard + list view + all callers)
         shell: bash
         run: |
           set -e
           rm -rf callnotes
-          mkdir -p callnotes/app/src/main/java/com/example/callnotes/{data,util,telephony,notify}
+          mkdir -p callnotes/app/src/main/java/com/example/callnotes/{data,util,telephony,notify,ui}
           mkdir -p callnotes/app/src/main/res/{layout,values,drawable,mipmap-anydpi-v26}
 
           # settings.gradle
           cat > callnotes/settings.gradle <<'EOF'
           pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
               plugins {
                   id("com.android.application") version "8.5.1"
                   id("org.jetbrains.kotlin.android") version "1.9.24"
@@ -55,12 +47,7 @@ jobs:
 
           # Root build.gradle
           cat > callnotes/build.gradle <<'EOF'
-          allprojects {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
+          allprojects { repositories { google(); mavenCentral() } }
           EOF
 
           # gradle.properties
@@ -78,34 +65,27 @@ jobs:
             id("org.jetbrains.kotlin.android")
             id("org.jetbrains.kotlin.kapt")
           }
-
           android {
             namespace = "com.example.callnotes"
             compileSdk = 34
-
             defaultConfig {
               applicationId = "com.example.callnotes"
               minSdk = 26
               targetSdk = 34
-              versionCode = 1
-              versionName = "1.0.0"
+              versionCode = 2
+              versionName = "1.1.0"
             }
-
             buildFeatures { viewBinding = true }
-
-            compileOptions {
-              sourceCompatibility = JavaVersion.VERSION_17
-              targetCompatibility = JavaVersion.VERSION_17
-            }
+            compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
             kotlinOptions { jvmTarget = "17" }
           }
-
           dependencies {
             implementation("androidx.core:core-ktx:1.13.1")
             implementation("androidx.appcompat:appcompat:1.7.0")
             implementation("com.google.android.material:material:1.12.0")
             implementation("androidx.activity:activity-ktx:1.9.2")
             implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
+            implementation("androidx.recyclerview:recyclerview:1.3.2")
 
             implementation("androidx.room:room-runtime:2.6.1")
             implementation("androidx.room:room-ktx:2.6.1")
@@ -125,21 +105,16 @@ jobs:
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
               <uses-permission android:name="android.permission.PROCESS_OUTGOING_CALLS" />
-
               <application
                   android:allowBackup="true"
                   android:label="CallNotes"
                   android:theme="@style/Theme.Material3.DayNight.NoActionBar">
-
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true">
+                  <activity android:name=".ui.MainActivity" android:exported="true">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
                   </activity>
-
                   <service
                       android:name=".telephony.CallScreeningSvc"
                       android:exported="true"
@@ -148,98 +123,109 @@ jobs:
                           <action android:name="android.telecom.CallScreeningService" />
                       </intent-filter>
                   </service>
-
                   <service
                       android:name=".telephony.OverlayService"
                       android:exported="false"
                       android:foregroundServiceType="phoneCall" />
-
-                  <receiver
-                      android:name=".notify.NotificationActionReceiver"
-                      android:exported="false" />
-
-                  <receiver
-                      android:name=".telephony.LegacyOutgoingReceiver"
-                      android:exported="true">
+                  <receiver android:name=".notify.NotificationActionReceiver" android:exported="false" />
+                  <receiver android:name=".telephony.LegacyOutgoingReceiver" android:exported="true">
                       <intent-filter android:priority="999">
                           <action android:name="android.intent.action.NEW_OUTGOING_CALL" />
                       </intent-filter>
                   </receiver>
-
               </application>
           </manifest>
           EOF
 
           # --- Kotlin sources ---
 
-          # MainActivity
-          cat > callnotes/app/src/main/java/com/example/callnotes/MainActivity.kt <<'EOF'
-          package com.example.callnotes
+          # ui/MainActivity.kt  (shows saved notes list)
+          cat > callnotes/app/src/main/java/com/example/callnotes/ui/MainActivity.kt <<'EOF'
+          package com.example.callnotes.ui
 
           import android.os.Bundle
-          import android.widget.Toast
+          import android.widget.TextView
           import androidx.activity.result.contract.ActivityResultContracts
           import androidx.appcompat.app.AppCompatActivity
+          import androidx.lifecycle.lifecycleScope
+          import androidx.recyclerview.widget.LinearLayoutManager
+          import androidx.recyclerview.widget.RecyclerView
+          import com.example.callnotes.R
+          import com.example.callnotes.data.AppDatabase
+          import com.example.callnotes.data.CallNote
           import com.example.callnotes.util.Permissions
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.withContext
+          import android.widget.Toast
+          import android.app.role.RoleManager
 
           class MainActivity : AppCompatActivity() {
               private val permLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
               private val overlayLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
 
+              private lateinit var recycler: RecyclerView
+              private lateinit var empty: TextView
+              private val adapter = NoteAdapter()
+
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
                   setContentView(R.layout.activity_main)
 
+                  recycler = findViewById(R.id.recycler)
+                  empty = findViewById(R.id.empty)
+                  recycler.layoutManager = LinearLayoutManager(this)
+                  recycler.adapter = adapter
+
+                  // Ask runtime + overlay + Call Screening role
                   permLauncher.launch(Permissions.RUNTIME)
                   Permissions.ensureOverlayPermission(this, overlayLauncher)
-
-                  val roleMgr = getSystemService(android.app.role.RoleManager::class.java)
+                  val roleMgr = getSystemService(RoleManager::class.java)
                   if (roleMgr != null &&
-                      roleMgr.isRoleAvailable(android.app.role.RoleManager.ROLE_CALL_SCREENING) &&
-                      !roleMgr.isRoleHeld(android.app.role.RoleManager.ROLE_CALL_SCREENING)) {
-                      val i = roleMgr.createRequestRoleIntent(android.app.role.RoleManager.ROLE_CALL_SCREENING)
-                      startActivity(i)
-                      Toast.makeText(this, "Please grant Call Screening to enable incoming popups", Toast.LENGTH_LONG).show()
+                      roleMgr.isRoleAvailable(RoleManager.ROLE_CALL_SCREENING) &&
+                      !roleMgr.isRoleHeld(RoleManager.ROLE_CALL_SCREENING)) {
+                      startActivity(roleMgr.createRequestRoleIntent(RoleManager.ROLE_CALL_SCREENING))
+                      Toast.makeText(this, "Please grant Call Screening to enable in-call popups", Toast.LENGTH_LONG).show()
+                  }
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  lifecycleScope.launchWhenResumed {
+                      val items = withContext(Dispatchers.IO) { AppDatabase.get(this@MainActivity).dao().getAll() }
+                      adapter.submit(items)
+                      empty.visibility = if (items.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
+                  }
+              }
+
+              private class NoteAdapter : RecyclerView.Adapter<NoteAdapter.VH>() {
+                  private val items = mutableListOf<CallNote>()
+                  fun submit(newItems: List<CallNote>) { items.clear(); items.addAll(newItems); notifyDataSetChanged() }
+                  override fun onCreateViewHolder(p: android.view.ViewGroup, vType: Int): VH {
+                      val v = android.view.LayoutInflater.from(p.context).inflate(R.layout.item_note, p, false)
+                      return VH(v)
+                  }
+                  override fun onBindViewHolder(h: VH, i: Int) {
+                      val it = items[i]
+                      h.title.text = listOfNotNull(it.subject, it.company, it.role, it.rawNumber).firstOrNull() ?: it.rawNumber
+                      val whenTxt = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it.updatedAt))
+                      h.sub.text = "${it.normalizedNumber} • $whenTxt"
+                  }
+                  override fun getItemCount() = items.size
+                  class VH(v: android.view.View) : RecyclerView.ViewHolder(v) {
+                      val title: TextView = v.findViewById(R.id.title)
+                      val sub: TextView = v.findViewById(R.id.sub)
                   }
               }
           }
           EOF
 
-          # data/AppDatabase.kt
-          cat > callnotes/app/src/main/java/com/example/callnotes/data/AppDatabase.kt <<'EOF'
-          package com.example.callnotes.data
-
-          import android.content.Context
-          import androidx.room.Database
-          import androidx.room.Room
-          import androidx.room.RoomDatabase
-
-          @Database(entities = [CallNote::class], version = 1)
-          abstract class AppDatabase : RoomDatabase() {
-              abstract fun dao(): CallNoteDao
-
-              companion object {
-                  @Volatile private var INSTANCE: AppDatabase? = null
-                  fun get(ctx: Context) = INSTANCE ?: synchronized(this) {
-                      INSTANCE ?: Room.databaseBuilder(ctx, AppDatabase::class.java, "callnotes.db")
-                          .build().also { INSTANCE = it }
-                  }
-              }
-          }
-          EOF
-
-          # data/CallNote.kt
+          # data classes/DAO/DB
           cat > callnotes/app/src/main/java/com/example/callnotes/data/CallNote.kt <<'EOF'
           package com.example.callnotes.data
-
           import androidx.room.Entity
           import androidx.room.PrimaryKey
           import androidx.room.Index
-
-          @Entity(
-              tableName = "call_notes",
-              indices = [Index(value = ["normalizedNumber"], unique = true)]
-          )
+          @Entity(tableName = "call_notes", indices = [Index(value = ["normalizedNumber"], unique = true)])
           data class CallNote(
               @PrimaryKey(autoGenerate = true) val id: Long = 0,
               val rawNumber: String,
@@ -257,26 +243,42 @@ jobs:
           )
           EOF
 
-          # data/CallNoteDao.kt
           cat > callnotes/app/src/main/java/com/example/callnotes/data/CallNoteDao.kt <<'EOF'
           package com.example.callnotes.data
-
           import androidx.room.*
-
           @Dao
           interface CallNoteDao {
               @Query("SELECT * FROM call_notes WHERE normalizedNumber = :n LIMIT 1")
               suspend fun getByNumber(n: String): CallNote?
-
+              @Query("SELECT * FROM call_notes ORDER BY updatedAt DESC")
+              suspend fun getAll(): List<CallNote>
               @Insert(onConflict = OnConflictStrategy.REPLACE)
               suspend fun upsert(note: CallNote): Long
           }
           EOF
 
-          # util/PhoneNormalizer.kt
+          cat > callnotes/app/src/main/java/com/example/callnotes/data/AppDatabase.kt <<'EOF'
+          package com.example.callnotes.data
+          import android.content.Context
+          import androidx.room.Database
+          import androidx.room.Room
+          import androidx.room.RoomDatabase
+          @Database(entities = [CallNote::class], version = 1)
+          abstract class AppDatabase : RoomDatabase() {
+              abstract fun dao(): CallNoteDao
+              companion object {
+                  @Volatile private var INSTANCE: AppDatabase? = null
+                  fun get(ctx: Context) = INSTANCE ?: synchronized(this) {
+                      INSTANCE ?: Room.databaseBuilder(ctx, AppDatabase::class.java, "callnotes.db")
+                          .build().also { INSTANCE = it }
+                  }
+              }
+          }
+          EOF
+
+          # util
           cat > callnotes/app/src/main/java/com/example/callnotes/util/PhoneNormalizer.kt <<'EOF'
           package com.example.callnotes.util
-
           object PhoneNormalizer {
               fun normalize(raw: String?): String {
                   val d = raw?.filter { it.isDigit() } ?: ""
@@ -285,35 +287,24 @@ jobs:
           }
           EOF
 
-          # util/Contacts.kt
           cat > callnotes/app/src/main/java/com/example/callnotes/util/Contacts.kt <<'EOF'
           package com.example.callnotes.util
-
           import android.content.Context
           import android.net.Uri
           import android.provider.ContactsContract
-
           object ContactsUtil {
               fun isUnknownNumber(context: Context, number: String): Boolean {
                   if (number.isBlank()) return true
                   val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number))
-                  context.contentResolver.query(
-                      uri,
-                      arrayOf(ContactsContract.PhoneLookup._ID),
-                      null,
-                      null,
-                      null
-                  ).use { c ->
+                  context.contentResolver.query(uri, arrayOf(ContactsContract.PhoneLookup._ID), null, null, null).use { c ->
                       return !(c != null && c.moveToFirst())
                   }
               }
           }
           EOF
 
-          # util/Permissions.kt
           cat > callnotes/app/src/main/java/com/example/callnotes/util/Permissions.kt <<'EOF'
           package com.example.callnotes.util
-
           import android.Manifest
           import android.content.Context
           import android.content.Intent
@@ -321,14 +312,12 @@ jobs:
           import android.os.Build
           import android.provider.Settings
           import androidx.activity.result.ActivityResultLauncher
-
           object Permissions {
               val RUNTIME = buildList {
                   add(Manifest.permission.READ_PHONE_STATE)
                   add(Manifest.permission.READ_CONTACTS)
                   if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
               }.toTypedArray()
-
               fun ensureOverlayPermission(ctx: Context, launcher: ActivityResultLauncher<Intent>) {
                   if (!Settings.canDrawOverlays(ctx)) {
                       val i = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + ctx.packageName))
@@ -338,35 +327,29 @@ jobs:
           }
           EOF
 
-          # telephony/CallScreeningSvc.kt
+          # telephony
           cat > callnotes/app/src/main/java/com/example/callnotes/telephony/CallScreeningSvc.kt <<'EOF'
           package com.example.callnotes.telephony
-
           import android.telecom.Call
           import android.telecom.CallScreeningService
           import com.example.callnotes.data.AppDatabase
           import com.example.callnotes.util.PhoneNormalizer
-          import com.example.callnotes.util.ContactsUtil
           import kotlinx.coroutines.CoroutineScope
           import kotlinx.coroutines.Dispatchers
           import kotlinx.coroutines.launch
-
           class CallScreeningSvc : CallScreeningService() {
               private val scope = CoroutineScope(Dispatchers.IO)
-
               override fun onScreenCall(callDetails: Call.Details) {
                   val handle = callDetails.handle
                   val number = handle?.schemeSpecificPart ?: return
                   val n = PhoneNormalizer.normalize(number)
                   val ctx = this
-
                   scope.launch {
                       val dao = AppDatabase.get(ctx).dao()
                       val existing = dao.getByNumber(n)
-                      val isUnknown = ContactsUtil.isUnknownNumber(ctx, n)
                       val incoming = callDetails.callDirection == Call.Details.DIRECTION_INCOMING
-                      if ((incoming && isUnknown) || existing != null) {
-                          OverlayService.showPrompt(ctx, number, existing != null)
+                      if (incoming) {
+                          OverlayService.showPrompt(ctx, number, existing != null)  // ✅ all callers now
                       }
                   }
                   respondToCall(callDetails, CallResponse.Builder().build())
@@ -374,10 +357,8 @@ jobs:
           }
           EOF
 
-          # telephony/OverlayService.kt  (FIXED: Gravity.TOP or Gravity.END)
           cat > callnotes/app/src/main/java/com/example/callnotes/telephony/OverlayService.kt <<'EOF'
           package com.example.callnotes.telephony
-
           import android.app.DatePickerDialog
           import android.app.Notification
           import android.app.NotificationChannel
@@ -393,6 +374,7 @@ jobs:
           import android.view.LayoutInflater
           import android.view.View
           import android.view.WindowManager
+          import android.view.inputmethod.InputMethodManager
           import android.widget.*
           import androidx.core.app.NotificationCompat
           import com.example.callnotes.R
@@ -404,54 +386,65 @@ jobs:
           import kotlinx.coroutines.Dispatchers
           import kotlinx.coroutines.launch
           import java.util.Calendar
-
           class OverlayService : Service() {
               private lateinit var wm: WindowManager
               private var viewPrompt: View? = null
               private var viewForm: View? = null
               private var selectedWhenMillis: Long? = null
               private val scope = CoroutineScope(Dispatchers.IO)
-
               override fun onCreate() {
                   super.onCreate()
                   wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
                   createChannel()
                   startForeground(42, buildNotification("Ready", null))
               }
-
               override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
                   val number = intent?.getStringExtra(EXTRA_NUMBER) ?: return START_NOT_STICKY
                   val hasExisting = intent.getBooleanExtra(EXTRA_HAS_EXISTING, false)
                   showPrompt(number, hasExisting)
                   return START_NOT_STICKY
               }
-
-              override fun onDestroy() {
-                  removeViews()
-                  super.onDestroy()
-              }
-
+              override fun onDestroy() { removeViews(); super.onDestroy() }
               override fun onBind(intent: Intent?): IBinder? = null
 
-              private fun windowParams(): WindowManager.LayoutParams =
+              private fun baseType() =
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                  else WindowManager.LayoutParams.TYPE_PHONE
+
+              private fun promptParams(): WindowManager.LayoutParams =
                   WindowManager.LayoutParams(
                       WindowManager.LayoutParams.WRAP_CONTENT,
                       WindowManager.LayoutParams.WRAP_CONTENT,
-                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                      else
-                          WindowManager.LayoutParams.TYPE_PHONE,
+                      baseType(),
                       WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                               WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                               WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                       PixelFormat.TRANSLUCENT
-                  ).apply { gravity = Gravity.TOP or Gravity.END; x = 16; y = 150 }
+                  ).apply {
+                      gravity = Gravity.TOP or Gravity.END; x = 16; y = 150
+                      softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                  }
+
+              private fun formParams(): WindowManager.LayoutParams =
+                  WindowManager.LayoutParams(
+                      WindowManager.LayoutParams.WRAP_CONTENT,
+                      WindowManager.LayoutParams.WRAP_CONTENT,
+                      baseType(),
+                      // ✅ Focusable so IME (keyboard) can appear
+                      WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                              WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                      PixelFormat.TRANSLUCENT
+                  ).apply {
+                      gravity = Gravity.TOP or Gravity.END; x = 16; y = 150
+                      softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                              WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
+                  }
 
               private fun showPrompt(number: String, hasExisting: Boolean) {
                   removeViews()
-                  val inflater = LayoutInflater.from(this)
-                  viewPrompt = inflater.inflate(R.layout.overlay_prompt, null)
-                  val root = viewPrompt!!
+                  val root = LayoutInflater.from(this).inflate(R.layout.overlay_prompt, null)
+                  viewPrompt = root
                   root.findViewById<TextView>(R.id.tvNumber).text = number
                   val btnYes = root.findViewById<Button>(R.id.btnYes)
                   val btnNo = root.findViewById<Button>(R.id.btnNo)
@@ -460,15 +453,14 @@ jobs:
                   btnOpen.setOnClickListener { showForm(number) }
                   btnYes.setOnClickListener { showForm(number) }
                   btnNo.setOnClickListener { stopSelf() }
-                  wm.addView(root, windowParams())
+                  wm.addView(root, promptParams())
                   (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                       .notify(42, buildNotification("Tap to open form", number))
               }
 
               private fun showForm(number: String) {
-                  val inflater = LayoutInflater.from(this)
-                  viewForm = inflater.inflate(R.layout.overlay_form, null)
-                  val root = viewForm!!
+                  val root = LayoutInflater.from(this).inflate(R.layout.overlay_form, null)
+                  viewForm = root
                   val etCompany = root.findViewById<EditText>(R.id.etCompany)
                   val etSubject = root.findViewById<EditText>(R.id.etSubject)
                   val etRole = root.findViewById<EditText>(R.id.etRole)
@@ -484,15 +476,17 @@ jobs:
                   btnPickWhen.setOnClickListener {
                       pickDateTime { millis ->
                           selectedWhenMillis = millis
-                          tvWhen.text = if (millis != null) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(millis)) else getString(R.string.not_set)
+                          tvWhen.text = if (millis != null)
+                              java.text.DateFormat.getDateTimeInstance().format(java.util.Date(millis))
+                          else getString(R.string.not_set)
                       }
                   }
-
                   btnCancel.setOnClickListener { removeViews(); stopSelf() }
                   btnSave.setOnClickListener {
                       scope.launch {
                           val n = PhoneNormalizer.normalize(number)
                           val whenMillis = if (swFollow.isChecked) selectedWhenMillis else null
+                          val now = System.currentTimeMillis()
                           val note = CallNote(
                               rawNumber = number,
                               normalizedNumber = n,
@@ -503,58 +497,52 @@ jobs:
                               noticePeriod = etNotice.text.toString().ifBlank { null },
                               description = etDesc.text.toString().ifBlank { null },
                               followUpNeeded = swFollow.isChecked,
-                              followUpAtMillis = whenMillis
+                              followUpAtMillis = whenMillis,
+                              createdAt = now,
+                              updatedAt = now
                           )
                           AppDatabase.get(this@OverlayService).dao().upsert(note)
-                          if (note.followUpNeeded && whenMillis != null && whenMillis > System.currentTimeMillis()) {
-                              com.example.callnotes.notify.FollowUpWorker.scheduleFollowUp(
-                                  this@OverlayService,
-                                  n,
-                                  note.company ?: note.rawNumber,
-                                  whenMillis
-                              )
-                          }
                           stopSelf()
                       }
                   }
 
-                  viewPrompt?.let { wm.removeView(it) }
-                  viewPrompt = null
-                  wm.addView(root, windowParams())
+                  viewPrompt?.let { wm.removeView(it) }; viewPrompt = null
+                  wm.addView(root, formParams())
+
+                  // ✅ Focus first field and force-show keyboard after view is attached
+                  root.post {
+                      etCompany.requestFocus()
+                      val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                      imm.showSoftInput(etCompany, InputMethodManager.SHOW_IMPLICIT)
+                  }
               }
 
               private fun removeViews() {
                   runCatching { viewPrompt?.let { wm.removeView(it) } }
                   runCatching { viewForm?.let { wm.removeView(it) } }
-                  viewPrompt = null
-                  viewForm = null
+                  viewPrompt = null; viewForm = null
               }
 
               private fun createChannel() {
                   val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                  val id = CHANNEL_ID
-                  if (Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(id) == null) {
-                      nm.createNotificationChannel(NotificationChannel(id, "CallNotes", NotificationManager.IMPORTANCE_LOW))
+                  if (Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(CHANNEL_ID) == null) {
+                      nm.createNotificationChannel(NotificationChannel(CHANNEL_ID, "CallNotes", NotificationManager.IMPORTANCE_LOW))
                   }
               }
 
               private fun buildNotification(text: String, number: String?): Notification {
-                  val nmPending = PendingIntent.getBroadcast(
-                      this, 100,
+                  val open = PendingIntent.getBroadcast(this, 100,
                       NotificationActionReceiver.intentOpen(this, number ?: ""),
-                      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                  )
-                  val dismissPending = PendingIntent.getBroadcast(
-                      this, 101,
+                      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                  val dismiss = PendingIntent.getBroadcast(this, 101,
                       NotificationActionReceiver.intentDismiss(this),
-                      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                  )
+                      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                   return NotificationCompat.Builder(this, CHANNEL_ID)
                       .setSmallIcon(R.mipmap.ic_launcher)
                       .setContentTitle("Call note")
                       .setContentText(text)
-                      .addAction(0, getString(R.string.open), nmPending)
-                      .addAction(0, getString(R.string.dismiss), dismissPending)
+                      .addAction(0, getString(R.string.open), open)
+                      .addAction(0, getString(R.string.dismiss), dismiss)
                       .setOngoing(true)
                       .build()
               }
@@ -573,35 +561,26 @@ jobs:
 
               private fun pickDateTime(onPicked: (Long?) -> Unit) {
                   val now = Calendar.getInstance()
-                  val d = DatePickerDialog(
-                      this,
-                      { _, y, m, day ->
-                          val t = android.app.TimePickerDialog(
-                              this,
-                              { _, h, min ->
-                                  val cal = Calendar.getInstance().apply { set(y, m, day, h, min, 0); set(Calendar.MILLISECOND, 0) }
-                                  onPicked(cal.timeInMillis)
-                              }, now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), true
-                          )
-                          t.window?.setType(android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
-                          t.show()
-                      }, now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH)
-                  )
+                  val d = DatePickerDialog(this, { _, y, m, day ->
+                      val t = android.app.TimePickerDialog(this, { _, h, min ->
+                          val cal = Calendar.getInstance().apply { set(y, m, day, h, min, 0); set(Calendar.MILLISECOND, 0) }
+                          onPicked(cal.timeInMillis)
+                      }, now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), true)
+                      t.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+                      t.show()
+                  }, now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH))
                   d.datePicker.minDate = System.currentTimeMillis() - 1000
-                  d.window?.setType(android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+                  d.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
                   d.show()
               }
           }
           EOF
 
-          # telephony/LegacyOutgoingReceiver.kt
           cat > callnotes/app/src/main/java/com/example/callnotes/telephony/LegacyOutgoingReceiver.kt <<'EOF'
           package com.example.callnotes.telephony
-
           import android.content.BroadcastReceiver
           import android.content.Context
           import android.content.Intent
-
           class LegacyOutgoingReceiver : BroadcastReceiver() {
               override fun onReceive(context: Context, intent: Intent) {
                   val number = intent.extras?.getString(Intent.EXTRA_PHONE_NUMBER) ?: return
@@ -610,15 +589,13 @@ jobs:
           }
           EOF
 
-          # notify/NotificationActionReceiver.kt
+          # notify
           cat > callnotes/app/src/main/java/com/example/callnotes/notify/NotificationActionReceiver.kt <<'EOF'
           package com.example.callnotes.notify
-
           import android.content.BroadcastReceiver
           import android.content.Context
           import android.content.Intent
           import com.example.callnotes.telephony.OverlayService
-
           class NotificationActionReceiver : BroadcastReceiver() {
               override fun onReceive(context: Context, intent: Intent) {
                   when (intent.action) {
@@ -634,90 +611,59 @@ jobs:
                   const val ACTION_DISMISS = "com.example.callnotes.DISMISS"
                   private const val EXTRA_NUMBER = "n"
                   fun intentOpen(ctx: Context, number: String) =
-                      Intent(ctx, NotificationActionReceiver::class.java).apply {
-                          action = ACTION_OPEN
-                          putExtra(EXTRA_NUMBER, number)
-                      }
+                      Intent(ctx, NotificationActionReceiver::class.java).apply { action = ACTION_OPEN; putExtra(EXTRA_NUMBER, number) }
                   fun intentDismiss(ctx: Context) =
                       Intent(ctx, NotificationActionReceiver::class.java).apply { action = ACTION_DISMISS }
               }
           }
           EOF
 
-          # notify/FollowUpWorker.kt
-          cat > callnotes/app/src/main/java/com/example/callnotes/notify/FollowUpWorker.kt <<'EOF'
-          package com.example.callnotes.notify
+          # --- Layouts & resources ---
 
-          import android.content.Context
-          import androidx.work.Worker
-          import androidx.work.WorkerParameters
-          import androidx.work.OneTimeWorkRequestBuilder
-          import androidx.work.Data
-          import androidx.work.ExistingWorkPolicy
-          import androidx.work.WorkManager
-          import android.app.NotificationManager
-          import androidx.core.app.NotificationCompat
-          import com.example.callnotes.R
-
-          class FollowUpWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) {
-              override fun doWork(): Result {
-                  val number = inputData.getString(KEY_NUMBER) ?: return Result.success()
-                  val title = "Follow-up reminder"
-                  val text = inputData.getString(KEY_LABEL) ?: number
-                  val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                  val notif = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-                      .setSmallIcon(R.mipmap.ic_launcher)
-                      .setContentTitle(title)
-                      .setContentText(text)
-                      .setAutoCancel(true)
-                      .addAction(0, applicationContext.getString(R.string.open),
-                          android.app.PendingIntent.getBroadcast(
-                              applicationContext, 200,
-                              NotificationActionReceiver.intentOpen(applicationContext, number),
-                              android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-                          )
-                      )
-                      .build()
-                  nm.notify(number.hashCode(), notif)
-                  return Result.success()
-              }
-              companion object {
-                  private const val CHANNEL_ID = "callnotes"
-                  private const val KEY_NUMBER = "number"
-                  private const val KEY_LABEL = "label"
-                  fun scheduleFollowUp(ctx: Context, normalizedNumber: String, label: String, whenMillis: Long) {
-                      val delay = (whenMillis - System.currentTimeMillis()).coerceAtLeast(0)
-                      val data = Data.Builder()
-                          .putString(KEY_NUMBER, normalizedNumber)
-                          .putString(KEY_LABEL, label)
-                          .build()
-                      val req = OneTimeWorkRequestBuilder<FollowUpWorker>()
-                          .setInitialDelay(delay, java.util.concurrent.TimeUnit.MILLISECONDS)
-                          .setInputData(data)
-                          .addTag("followup_$normalizedNumber")
-                          .build()
-                      WorkManager.getInstance(ctx)
-                          .enqueueUniqueWork("followup_$normalizedNumber", ExistingWorkPolicy.REPLACE, req)
-                  }
-              }
-          }
-          EOF
-
-          # --- Resources ---
-
-          # activity_main.xml
+          # activity_main.xml (list of notes)
           cat > callnotes/app/src/main/res/layout/activity_main.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
-          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:orientation="vertical"
               android:layout_width="match_parent"
               android:layout_height="match_parent"
-              android:padding="24dp">
+              android:padding="16dp">
               <TextView
-                  android:layout_width="wrap_content"
+                  android:id="@+id/empty"
+                  android:text="No notes yet. Call someone and save a note!"
+                  android:layout_width="match_parent"
                   android:layout_height="wrap_content"
-                  android:text="CallNotes is running. Grant permissions when prompted, then place a test call."
-                  android:textSize="16sp"/>
-          </FrameLayout>
+                  android:padding="8dp"
+                  android:visibility="gone"/>
+              <androidx.recyclerview.widget.RecyclerView
+                  android:id="@+id/recycler"
+                  android:layout_width="match_parent"
+                  android:layout_height="0dp"
+                  android:layout_weight="1"/>
+          </LinearLayout>
+          EOF
+
+          # item_note.xml
+          cat > callnotes/app/src/main/res/layout/item_note.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:orientation="vertical"
+              android:padding="12dp"
+              android:layout_width="match_parent"
+              android:layout_height="wrap_content">
+              <TextView
+                  android:id="@+id/title"
+                  android:textStyle="bold"
+                  android:textSize="16sp"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"/>
+              <TextView
+                  android:id="@+id/sub"
+                  android:textSize="13sp"
+                  android:textColor="#666"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"/>
+          </LinearLayout>
           EOF
 
           # overlay_prompt.xml
@@ -748,28 +694,14 @@ jobs:
                   android:layout_marginTop="8dp"
                   android:layout_width="wrap_content"
                   android:layout_height="wrap_content">
-                  <Button
-                      android:id="@+id/btnYes"
-                      android:text="Yes"
-                      android:layout_width="wrap_content"
-                      android:layout_height="wrap_content"/>
-                  <Button
-                      android:id="@+id/btnOpen"
-                      android:text="Open"
-                      android:layout_marginStart="8dp"
-                      android:layout_width="wrap_content"
-                      android:layout_height="wrap_content"/>
-                  <Button
-                      android:id="@+id/btnNo"
-                      android:text="Cancel"
-                      android:layout_marginStart="8dp"
-                      android:layout_width="wrap_content"
-                      android:layout_height="wrap_content"/>
+                  <Button android:id="@+id/btnYes" android:text="Yes" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                  <Button android:id="@+id/btnOpen" android:text="Open" android:layout_marginStart="8dp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                  <Button android:id="@+id/btnNo" android:text="Cancel" android:layout_marginStart="8dp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
               </LinearLayout>
           </LinearLayout>
           EOF
 
-          # overlay_form.xml (fixed: textColorHint + & via string)
+          # overlay_form.xml (textColorHint + escape & via string)
           cat > callnotes/app/src/main/res/layout/overlay_form.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
@@ -787,43 +719,17 @@ jobs:
                   <EditText android:id="@+id/etSalary" android:hint="Salary" android:inputType="number" android:textColor="#FFFFFF" android:textColorHint="#AAAAAA" android:layout_width="match_parent" android:layout_height="wrap_content"/>
                   <EditText android:id="@+id/etNotice" android:hint="Notice period" android:textColor="#FFFFFF" android:textColorHint="#AAAAAA" android:layout_width="match_parent" android:layout_height="wrap_content"/>
                   <EditText android:id="@+id/etDescription" android:hint="Description" android:textColor="#FFFFFF" android:textColorHint="#AAAAAA" android:minLines="2" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-                  <LinearLayout
-                      android:orientation="horizontal"
-                      android:layout_width="match_parent"
-                      android:layout_height="wrap_content"
-                      android:layout_marginTop="8dp">
+                  <LinearLayout android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp">
                       <TextView android:text="Follow-up?" android:textColor="#FFFFFF" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
                       <Switch android:id="@+id/swFollow" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
                   </LinearLayout>
-                  <LinearLayout
-                      android:orientation="horizontal"
-                      android:layout_marginTop="6dp"
-                      android:layout_width="match_parent"
-                      android:layout_height="wrap_content">
-                      <TextView
-                          android:text="Follow-up at"
-                          android:textColor="#FFFFFF"
-                          android:layout_width="wrap_content"
-                          android:layout_height="wrap_content"/>
+                  <LinearLayout android:orientation="horizontal" android:layout_marginTop="6dp" android:layout_width="match_parent" android:layout_height="wrap_content">
+                      <TextView android:text="Follow-up at" android:textColor="#FFFFFF" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
                       <Space android:layout_width="8dp" android:layout_height="wrap_content"/>
-                      <Button
-                          android:id="@+id/btnPickWhen"
-                          android:text="@string/pick_date_time"
-                          android:layout_width="wrap_content"
-                          android:layout_height="wrap_content"/>
+                      <Button android:id="@+id/btnPickWhen" android:text="@string/pick_date_time" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
                   </LinearLayout>
-                  <TextView
-                      android:id="@+id/tvWhenValue"
-                      android:text="@string/not_set"
-                      android:textColor="#DDDDDD"
-                      android:layout_marginTop="4dp"
-                      android:layout_width="match_parent"
-                      android:layout_height="wrap_content"/>
-                  <LinearLayout
-                      android:orientation="horizontal"
-                      android:layout_marginTop="8dp"
-                      android:layout_width="match_parent"
-                      android:layout_height="wrap_content">
+                  <TextView android:id="@+id/tvWhenValue" android:text="@string/not_set" android:textColor="#DDDDDD" android:layout_marginTop="4dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+                  <LinearLayout android:orientation="horizontal" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content">
                       <Button android:id="@+id/btnSave" android:text="Save" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
                       <Button android:id="@+id/btnCancel" android:text="Cancel" android:layout_marginStart="8dp" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
                   </LinearLayout>
@@ -842,13 +748,10 @@ jobs:
           </resources>
           EOF
 
-          # Minimal launcher icon resources
+          # minimal launcher icon resources
           cat > callnotes/app/src/main/res/values/colors.xml <<'EOF'
-          <resources>
-              <color name="ic_launcher_background">#3DDC84</color>
-          </resources>
+          <resources><color name="ic_launcher_background">#3DDC84</color></resources>
           EOF
-
           cat > callnotes/app/src/main/res/drawable/ic_launcher_foreground.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -856,7 +759,6 @@ jobs:
               <path android:fillColor="#FFFFFF" android:pathData="M18,18h72v72h-72z"/>
           </vector>
           EOF
-
           cat > callnotes/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
@@ -868,14 +770,12 @@ jobs:
           echo "Created project tree:"
           ls -R callnotes
 
-      - name: Build with Gradle 8.7
-        uses: gradle/gradle-build-action@v3
+      - uses: gradle/gradle-build-action@v3
         with:
           gradle-version: "8.7"
           arguments: -p callnotes assembleDebug --stacktrace --no-daemon
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: app-debug.apk
           path: callnotes/app/build/outputs/apk/debug/app-debug.apk
