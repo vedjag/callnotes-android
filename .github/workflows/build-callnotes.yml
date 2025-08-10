@@ -26,9 +26,12 @@ jobs:
         run: |
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
           yes | sdkmanager --licenses
+
       - name: Create Android project files
+        shell: bash
         run: |
           set -e
+          rm -rf callnotes
           mkdir -p callnotes/app/src/main/java/com/example/callnotes/{data,util,telephony,notify}
           mkdir -p callnotes/app/src/main/res/{layout,values,drawable,mipmap-anydpi-v26}
 
@@ -112,7 +115,7 @@ jobs:
           }
           EOF
 
-          # AndroidManifest.xml (uses Material3 theme directly)
+          # AndroidManifest.xml
           cat > callnotes/app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.READ_PHONE_STATE" />
@@ -181,7 +184,6 @@ jobs:
 
           class MainActivity : AppCompatActivity() {
               private val permLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
-
               private val overlayLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
 
               override fun onCreate(savedInstanceState: Bundle?) {
@@ -443,7 +445,7 @@ jobs:
                               WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                               WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                       PixelFormat.TRANSLUCENT
-                  ).apply { gravity = Gravity.TOP or Gravity.END; x = 16; y = 150 }
+                  ).apply { gravity = Gravity.TOP | Gravity.END; x = 16; y = 150 }
 
               private fun showPrompt(number: String, hasExisting: Boolean) {
                   removeViews()
@@ -767,71 +769,66 @@ jobs:
           </LinearLayout>
           EOF
 
-          # overlay_form.xml
-         <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:background="#CC1E1E1E"
-    android:padding="12dp">
-    <LinearLayout
-        android:orientation="vertical"
-        android:layout_width="300dp"
-        android:layout_height="wrap_content">
-
-        <EditText android:id="@+id/etCompany" android:hint="Company" android:textColor="#fff" android:textColorHint="#aaa" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-        <EditText android:id="@+id/etSubject" android:hint="Subject" android:textColor="#fff" android:textColorHint="#aaa" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-        <EditText android:id="@+id/etRole" android:hint="Role" android:textColor="#fff" android:textColorHint="#aaa" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-        <EditText android:id="@+id/etSalary" android:hint="Salary" android:inputType="number" android:textColor="#fff" android:textColorHint="#aaa" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-        <EditText android:id="@+id/etNotice" android:hint="Notice period" android:textColor="#fff" android:textColorHint="#aaa" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-        <EditText android:id="@+id/etDescription" android:hint="Description" android:textColor="#fff" android:textColorHint="#aaa" android:minLines="2" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-
-        <LinearLayout
-            android:orientation="horizontal"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp">
-            <TextView android:text="Follow-up?" android:textColor="#fff" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
-            <Switch android:id="@+id/swFollow" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        </LinearLayout>
-
-        <LinearLayout
-            android:orientation="horizontal"
-            android:layout_marginTop="6dp"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content">
-            <TextView
-                android:text="Follow-up at"
-                android:textColor="#fff"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"/>
-            <Space android:layout_width="8dp" android:layout_height="wrap_content"/>
-            <Button
-                android:id="@+id/btnPickWhen"
-                android:text="@string/pick_date_time"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"/>
-        </LinearLayout>
-
-        <TextView
-            android:id="@+id/tvWhenValue"
-            android:text="@string/not_set"
-            android:textColor="#ddd"
-            android:layout_marginTop="4dp"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"/>
-
-        <LinearLayout
-            android:orientation="horizontal"
-            android:layout_marginTop="8dp"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content">
-            <Button android:id="@+id/btnSave" android:text="Save" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
-            <Button android:id="@+id/btnCancel" android:text="Cancel" android:layout_marginStart="8dp" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
-        </LinearLayout>
-    </LinearLayout>
-</ScrollView>
-
+          # overlay_form.xml (fixed: textColorHint + string ref)
+          cat > callnotes/app/src/main/res/layout/overlay_form.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="wrap_content"
+              android:layout_height="wrap_content"
+              android:background="#CC1E1E1E"
+              android:padding="12dp">
+              <LinearLayout
+                  android:orientation="vertical"
+                  android:layout_width="300dp"
+                  android:layout_height="wrap_content">
+                  <EditText android:id="@+id/etCompany" android:hint="Company" android:textColor="#FFFFFF" android:textColorHint="#AAAAAA" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+                  <EditText android:id="@+id/etSubject" android:hint="Subject" android:textColor="#FFFFFF" android:textColorHint="#AAAAAA" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+                  <EditText android:id="@+id/etRole" android:hint="Role" android:textColor="#FFFFFF" android:textColorHint="#AAAAAA" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+                  <EditText android:id="@+id/etSalary" android:hint="Salary" android:inputType="number" android:textColor="#FFFFFF" android:textColorHint="#AAAAAA" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+                  <EditText android:id="@+id/etNotice" android:hint="Notice period" android:textColor="#FFFFFF" android:textColorHint="#AAAAAA" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+                  <EditText android:id="@+id/etDescription" android:hint="Description" android:textColor="#FFFFFF" android:textColorHint="#AAAAAA" android:minLines="2" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+                  <LinearLayout
+                      android:orientation="horizontal"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="8dp">
+                      <TextView android:text="Follow-up?" android:textColor="#FFFFFF" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+                      <Switch android:id="@+id/swFollow" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                  </LinearLayout>
+                  <LinearLayout
+                      android:orientation="horizontal"
+                      android:layout_marginTop="6dp"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content">
+                      <TextView
+                          android:text="Follow-up at"
+                          android:textColor="#FFFFFF"
+                          android:layout_width="wrap_content"
+                          android:layout_height="wrap_content"/>
+                      <Space android:layout_width="8dp" android:layout_height="wrap_content"/>
+                      <Button
+                          android:id="@+id/btnPickWhen"
+                          android:text="@string/pick_date_time"
+                          android:layout_width="wrap_content"
+                          android:layout_height="wrap_content"/>
+                  </LinearLayout>
+                  <TextView
+                      android:id="@+id/tvWhenValue"
+                      android:text="@string/not_set"
+                      android:textColor="#DDDDDD"
+                      android:layout_marginTop="4dp"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"/>
+                  <LinearLayout
+                      android:orientation="horizontal"
+                      android:layout_marginTop="8dp"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content">
+                      <Button android:id="@+id/btnSave" android:text="Save" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+                      <Button android:id="@+id/btnCancel" android:text="Cancel" android:layout_marginStart="8dp" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+                  </LinearLayout>
+              </LinearLayout>
+          </ScrollView>
           EOF
 
           # strings.xml
@@ -845,7 +842,7 @@ jobs:
           </resources>
           EOF
 
-          # Minimal launcher icon (so R.mipmap.ic_launcher resolves)
+          # Minimal launcher icon resources
           cat > callnotes/app/src/main/res/values/colors.xml <<'EOF'
           <resources>
               <color name="ic_launcher_background">#3DDC84</color>
@@ -868,7 +865,6 @@ jobs:
           </adaptive-icon>
           EOF
 
-          # Done creating files
           echo "Created project tree:"
           ls -R callnotes
 
